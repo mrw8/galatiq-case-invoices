@@ -9,6 +9,7 @@ from src.models.invoice import (
     ValidationResult,
 )
 from src.models.pipeline import PipelineState
+from src.policies import get_policies
 from src.utils.logging import AgentLogger
 
 
@@ -19,29 +20,21 @@ class ApprovalAgent:
     Uses a two-phase approach:
     1. Rule-based checks for hard requirements
     2. Generator/critic loop for nuanced decisions
+
+    Policy-driven flag classifications are loaded from data/policies.yaml.
     """
-
-    MAX_CRITIQUE_ROUNDS = 3
-
-    # Flags that trigger immediate rejection
-    HARD_REJECT_FLAGS = {
-        ValidationFlag.UNKNOWN_ITEM,
-        ValidationFlag.STOCK_EXCEEDED,
-        ValidationFlag.ZERO_STOCK,
-        ValidationFlag.NEGATIVE_QTY,
-        ValidationFlag.FRAUD_SUSPECT,
-        ValidationFlag.BLACKLISTED_VENDOR,
-        ValidationFlag.MISSING_VENDOR,
-    }
-
-    # Flags that require human review
-    HUMAN_REVIEW_FLAGS = {
-        ValidationFlag.FOREIGN_CURRENCY,
-        ValidationFlag.DUPLICATE_INVOICE,
-    }
 
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
+        self._policies = get_policies().approval
+
+        # Build flag sets from policy configuration (handle case conversion)
+        self._hard_reject_flags = {
+            ValidationFlag(f.upper()) for f in self._policies.hard_reject_flags
+        }
+        self._human_review_flags = {
+            ValidationFlag(f.upper()) for f in self._policies.human_review_flags
+        }
 
     def run(self, state: PipelineState) -> PipelineState:
         """
@@ -103,8 +96,8 @@ class ApprovalAgent:
 
         # Phase 1: Rule-based checks
 
-        # Check for hard reject flags
-        hard_flags = flag_set & self.HARD_REJECT_FLAGS
+        # Check for hard reject flags (from policies)
+        hard_flags = flag_set & self._hard_reject_flags
         if hard_flags:
             rules_applied.append("hard_reject_flags")
             return ApprovalDecision(
@@ -114,8 +107,8 @@ class ApprovalAgent:
                 rules_applied=rules_applied,
             )
 
-        # Check for human review flags
-        human_flags = flag_set & self.HUMAN_REVIEW_FLAGS
+        # Check for human review flags (from policies)
+        human_flags = flag_set & self._human_review_flags
         if human_flags:
             rules_applied.append("human_review_flags")
             return ApprovalDecision(
@@ -152,7 +145,7 @@ class ApprovalAgent:
         # Generate initial decision
         proposed_decision = self._generate_decision(invoice, validation, rules_applied)
 
-        for round_num in range(self.MAX_CRITIQUE_ROUNDS):
+        for round_num in range(self._policies.max_critique_rounds):
             # Critique the decision
             critique = self._critique_decision(
                 invoice,
@@ -192,7 +185,7 @@ class ApprovalAgent:
         return ApprovalDecision(
             invoice_number=invoice.invoice_number,
             status=ApprovalStatus.NEEDS_HUMAN,
-            reasoning=f"Could not reach consensus after {self.MAX_CRITIQUE_ROUNDS} rounds",
+            reasoning=f"Could not reach consensus after {self._policies.max_critique_rounds} rounds",
             critique_history=critique_history,
             rules_applied=rules_applied,
             escalation_reason="Generator/critic loop did not converge",

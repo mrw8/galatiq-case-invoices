@@ -11,6 +11,7 @@ dependencies = [
     "python-dateutil>=2.8",
     "rapidfuzz>=3.0",        # Fuzzy matching
     "structlog>=24.0",       # Structured logging
+    "pyyaml>=6.0",           # Policy configuration
 ]
 
 # LangGraph integration (optional - uncomment when available)

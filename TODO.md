@@ -68,9 +68,21 @@ uv run python -m src.main --invoice_path data/invoices/invoice_1001.txt
 
 ## Future Improvements
 
+### High Priority
+
 - [ ] Wire audit/recovery/workflow/feedback into main pipeline
 - [ ] Add review queue page to Streamlit UI
 - [ ] LangGraph integration when environment supports it
+- [x] **Policy-as-YAML** — `data/policies.yaml` + `src/policies/loader.py`. Validation thresholds, fraud keywords, approval flag rules all configurable.
+- [x] **Provider failover** — `FailoverClient` in `src/llm/client.py`. Grok → OpenRouter with sticky switching.
+- [x] **Replay mode** — `RecordingClient` + `ReplayClient` for zero-cost demos. Use `LLM_BACKEND=record` to capture, `LLM_BACKEND=replay` to playback.
+
+### Medium Priority
+
 - [ ] Batch processing analytics dashboard
 - [ ] LLM token cost tracking per run
 - [ ] Test Grok integration with funded API key
+- [ ] **Arithmetic grounding** — LLM only interprets; math verification is authoritative Python code. LLM can't override calculations even with clever prompts.
+- [ ] **Dual observability dashboards** — Separate user-facing (business metrics) vs dev-facing (engineering/perf) Streamlit pages. Different audiences need different insights.
+- [x] **Adversarial test corpus** — `data/invoices/adversarial/` with 5 prompt injection test files + `tests/test_adversarial.py` (8 tests).
+- [ ] **Content-hash deduplication** — Same invoice in different formats (PDF → JSON resubmit) detected as duplicate via content hash. Prevents double-processing of revisions.

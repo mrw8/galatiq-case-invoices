@@ -8,6 +8,7 @@ from src.models.invoice import (
     ValidationResult,
 )
 from src.models.pipeline import PipelineState
+from src.policies import get_policies
 from src.utils.logging import AgentLogger
 
 
@@ -22,12 +23,13 @@ class ValidationAgent:
     - Data integrity (negative quantities, missing fields)
     - Duplicate invoices
     - Amount consistency
-    """
 
-    HIGH_VALUE_THRESHOLD = 10000
+    Policy-driven thresholds are loaded from data/policies.yaml.
+    """
 
     def __init__(self, db_path: str | None = None):
         self.db_path = db_path
+        self._policies = get_policies().validation
 
     def run(self, state: PipelineState) -> PipelineState:
         """
@@ -104,11 +106,11 @@ class ValidationAgent:
                 severity="warning",
             ))
 
-        # Check for high value
-        if invoice.is_high_value:
+        # Check for high value (using policy threshold)
+        if invoice.total > self._policies.high_value_threshold:
             flags.append(FlagDetail(
                 flag=ValidationFlag.HIGH_VALUE,
-                message=f"Invoice total ${invoice.total:,.2f} exceeds $10,000 threshold",
+                message=f"Invoice total ${invoice.total:,.2f} exceeds ${self._policies.high_value_threshold:,.0f} threshold",
                 severity="warning",
             ))
 
@@ -214,27 +216,26 @@ class ValidationAgent:
         )
 
     def _check_fraud_indicators(self, invoice: Invoice) -> list[str]:
-        """Check for common fraud patterns."""
+        """Check for common fraud patterns using policy-driven rules."""
         indicators = []
 
-        # Check vendor name for suspicious keywords
+        # Check vendor name for suspicious keywords (from policies)
         vendor_lower = invoice.vendor.name.lower()
-        suspicious_names = ["fraud", "fake", "scam"]
-        for word in suspicious_names:
-            if word in vendor_lower:
+        for word in self._policies.suspicious_vendor_keywords:
+            if word.lower() in vendor_lower:
                 indicators.append(f"suspicious vendor name contains '{word}'")
 
-        # Check notes for urgency pressure
+        # Check notes for urgency pressure (from policies)
         if invoice.notes:
             notes_lower = invoice.notes.lower()
-            urgency_words = ["urgent", "immediately", "wire transfer", "penalty", "asap"]
-            for word in urgency_words:
-                if word in notes_lower:
+            for word in self._policies.urgency_pressure_keywords:
+                if word.lower() in notes_lower:
                     indicators.append(f"urgency pressure: '{word}'")
                     break
 
-        # Unusually high single-item invoice
-        if len(invoice.line_items) == 1 and invoice.total > 50000:
-            indicators.append("single high-value item over $50K")
+        # Unusually high single-item invoice (threshold from policies)
+        threshold = self._policies.single_item_high_value_threshold
+        if len(invoice.line_items) == 1 and invoice.total > threshold:
+            indicators.append(f"single high-value item over ${threshold:,.0f}")
 
         return indicators

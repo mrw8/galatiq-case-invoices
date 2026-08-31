@@ -1,6 +1,7 @@
 """Core invoice models and validation types."""
 
 import datetime
+import hashlib
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated

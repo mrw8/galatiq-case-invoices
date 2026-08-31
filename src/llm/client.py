@@ -356,12 +356,259 @@ class GrokClient(LLMClient):
         return json.loads(response)
 
 
+class OpenRouterClient(LLMClient):
+    """
+    OpenRouter client for failover support.
+
+    OpenRouter provides access to multiple models through a single API.
+    API key should be set via OPENROUTER_API_KEY environment variable.
+    """
+
+    BASE_URL = "https://openrouter.ai/api/v1"
+    DEFAULT_MODEL = "anthropic/claude-3.5-sonnet"
+
+    def __init__(self, api_key: str | None = None, model: str | None = None):
+        self._api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        self._model = model or self.DEFAULT_MODEL
+        self._client: Any = None
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            if not self._api_key:
+                raise ValueError(
+                    "OpenRouter API key not found. Set OPENROUTER_API_KEY environment variable."
+                )
+            try:
+                from openai import OpenAI
+            except ImportError as e:
+                raise ImportError("openai package required: pip install openai") from e
+
+            self._client = OpenAI(api_key=self._api_key, base_url=self.BASE_URL)
+        return self._client
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> str:
+        client = self._get_client()
+        response = client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content or ""
+
+    def chat_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> dict[str, Any]:
+        json_instruction = "Respond with valid JSON only. No markdown, no explanations."
+        enhanced_messages = list(messages)
+        if enhanced_messages and enhanced_messages[0].get("role") == "system":
+            enhanced_messages[0] = {
+                "role": "system",
+                "content": f"{enhanced_messages[0]['content']}\n\n{json_instruction}",
+            }
+        else:
+            enhanced_messages.insert(0, {"role": "system", "content": json_instruction})
+
+        response = self.chat(enhanced_messages, temperature, max_tokens)
+        response = response.strip()
+        for prefix in ("```json", "```"):
+            if response.startswith(prefix):
+                response = response[len(prefix):]
+        if response.endswith("```"):
+            response = response[:-3]
+        return json.loads(response.strip())
+
+
+class FailoverClient(LLMClient):
+    """
+    Client wrapper that tries multiple providers in order.
+
+    If the primary provider fails, automatically switches to fallback.
+    Uses sticky switching: once failover occurs, stays on fallback.
+    """
+
+    def __init__(self, providers: list[LLMClient]):
+        if not providers:
+            raise ValueError("At least one provider required")
+        self._providers = providers
+        self._current_index = 0
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> str:
+        return self._try_providers("chat", messages, temperature, max_tokens)
+
+    def chat_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> dict[str, Any]:
+        return self._try_providers("chat_json", messages, temperature, max_tokens)
+
+    def _try_providers(self, method: str, *args, **kwargs) -> Any:
+        """Try each provider starting from current index."""
+        last_error: Exception | None = None
+
+        for i in range(len(self._providers)):
+            idx = (self._current_index + i) % len(self._providers)
+            provider = self._providers[idx]
+
+            try:
+                result = getattr(provider, method)(*args, **kwargs)
+                # Sticky switch on success after failover
+                if idx != self._current_index:
+                    self._current_index = idx
+                return result
+            except Exception as e:
+                last_error = e
+                continue
+
+        raise RuntimeError(f"All {len(self._providers)} providers failed") from last_error
+
+
+class RecordingClient(LLMClient):
+    """
+    Client wrapper that records all LLM responses for replay.
+
+    Responses are saved to a JSON file keyed by input hash.
+    Use with ReplayClient for zero-cost demos/tests.
+    """
+
+    def __init__(self, wrapped: LLMClient, recording_path: str = "data/llm_recordings.json"):
+        self._wrapped = wrapped
+        self._recording_path = recording_path
+        self._recordings: dict[str, Any] = self._load_recordings()
+
+    def _load_recordings(self) -> dict[str, Any]:
+        from pathlib import Path
+        path = Path(self._recording_path)
+        if path.exists():
+            with open(path) as f:
+                return json.load(f)
+        return {}
+
+    def _save_recordings(self) -> None:
+        from pathlib import Path
+        path = Path(self._recording_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(self._recordings, f, indent=2)
+
+    def _hash_input(self, messages: list[dict[str, str]], method: str) -> str:
+        content = json.dumps({"method": method, "messages": messages}, sort_keys=True)
+        return hashlib.sha256(content.encode()).hexdigest()[:32]
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> str:
+        response = self._wrapped.chat(messages, temperature, max_tokens)
+        key = self._hash_input(messages, "chat")
+        self._recordings[key] = {"type": "chat", "response": response}
+        self._save_recordings()
+        return response
+
+    def chat_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> dict[str, Any]:
+        response = self._wrapped.chat_json(messages, temperature, max_tokens)
+        key = self._hash_input(messages, "chat_json")
+        self._recordings[key] = {"type": "chat_json", "response": response}
+        self._save_recordings()
+        return response
+
+
+class ReplayClient(LLMClient):
+    """
+    Client that replays recorded LLM responses.
+
+    Zero API cost for demos and deterministic testing.
+    Falls back to wrapped client if recording not found.
+    """
+
+    def __init__(
+        self,
+        recording_path: str = "data/llm_recordings.json",
+        fallback: LLMClient | None = None,
+        strict: bool = False,
+    ):
+        self._recording_path = recording_path
+        self._fallback = fallback
+        self._strict = strict  # If True, raise error on cache miss
+        self._recordings = self._load_recordings()
+
+    def _load_recordings(self) -> dict[str, Any]:
+        from pathlib import Path
+        path = Path(self._recording_path)
+        if path.exists():
+            with open(path) as f:
+                return json.load(f)
+        return {}
+
+    def _hash_input(self, messages: list[dict[str, str]], method: str) -> str:
+        content = json.dumps({"method": method, "messages": messages}, sort_keys=True)
+        return hashlib.sha256(content.encode()).hexdigest()[:32]
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> str:
+        key = self._hash_input(messages, "chat")
+        if key in self._recordings:
+            return self._recordings[key]["response"]
+        if self._strict:
+            raise KeyError(f"No recording found for hash {key}")
+        if self._fallback:
+            return self._fallback.chat(messages, temperature, max_tokens)
+        raise KeyError(f"No recording found for hash {key} and no fallback configured")
+
+    def chat_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> dict[str, Any]:
+        key = self._hash_input(messages, "chat_json")
+        if key in self._recordings:
+            return self._recordings[key]["response"]
+        if self._strict:
+            raise KeyError(f"No recording found for hash {key}")
+        if self._fallback:
+            return self._fallback.chat_json(messages, temperature, max_tokens)
+        raise KeyError(f"No recording found for hash {key} and no fallback configured")
+
+
 def get_client(backend: str | None = None) -> LLMClient:
     """
     Factory function to get the appropriate LLM client.
 
     Args:
-        backend: "mock" or "grok". Defaults to LLM_BACKEND env var, then "mock".
+        backend: Client mode. Options:
+            - "mock": Deterministic mock responses (default)
+            - "grok": xAI Grok API
+            - "openrouter": OpenRouter API
+            - "failover": Grok with OpenRouter fallback
+            - "record": Record responses from Grok
+            - "replay": Replay recorded responses
 
     Returns:
         Configured LLMClient instance.
@@ -372,5 +619,16 @@ def get_client(backend: str | None = None) -> LLMClient:
         return MockClient()
     elif backend == "grok":
         return GrokClient()
+    elif backend == "openrouter":
+        return OpenRouterClient()
+    elif backend == "failover":
+        return FailoverClient([GrokClient(), OpenRouterClient()])
+    elif backend == "record":
+        return RecordingClient(GrokClient())
+    elif backend == "replay":
+        return ReplayClient(fallback=MockClient())
     else:
-        raise ValueError(f"Unknown LLM backend: {backend}. Use 'mock' or 'grok'.")
+        raise ValueError(
+            f"Unknown LLM backend: {backend}. "
+            "Use 'mock', 'grok', 'openrouter', 'failover', 'record', or 'replay'."
+        )

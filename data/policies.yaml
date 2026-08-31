@@ -1,0 +1,109 @@
+# Business Policies Configuration
+# Edit these values to adjust invoice processing rules without code changes.
+# All monetary values are in USD unless otherwise specified.
+
+version: "1.0"
+
+# =============================================================================
+# Validation Policies
+# =============================================================================
+validation:
+  # Invoice total threshold that triggers extra scrutiny
+  high_value_threshold: 10000
+
+  # Single line item threshold that raises fraud suspicion
+  single_item_high_value_threshold: 50000
+
+  # Accepted currencies (others trigger FOREIGN_CURRENCY flag)
+  accepted_currencies:
+    - USD
+
+  # Fraud detection keywords in vendor names (case-insensitive)
+  suspicious_vendor_keywords:
+    - fraud
+    - fake
+    - scam
+    - test
+    - dummy
+
+  # Urgency pressure words in invoice notes (case-insensitive)
+  urgency_pressure_keywords:
+    - urgent
+    - immediately
+    - wire transfer
+    - penalty
+    - asap
+    - rush
+    - overdue
+
+# =============================================================================
+# Approval Policies
+# =============================================================================
+approval:
+  # Maximum generator/critic refinement rounds before escalating to human
+  max_critique_rounds: 3
+
+  # Validation flags that trigger immediate rejection (no LLM review)
+  hard_reject_flags:
+    - unknown_item
+    - stock_exceeded
+    - zero_stock
+    - negative_qty
+    - fraud_suspect
+    - blacklisted_vendor
+    - missing_vendor
+
+  # Validation flags that require human review (skip automated approval)
+  human_review_flags:
+    - foreign_currency
+    - duplicate_invoice
+
+  # Flags that allow conditional approval with warnings
+  conditional_approval_flags:
+    - fuzzy_match
+    - high_value
+    - amount_mismatch
+
+# =============================================================================
+# Payment Policies
+# =============================================================================
+payment:
+  # Minimum delay (days) before processing payment
+  min_processing_delay_days: 1
+
+  # Maximum payment amount without additional approval
+  max_auto_payment: 25000
+
+  # Payment methods by threshold
+  payment_methods:
+    - max_amount: 1000
+      method: petty_cash
+    - max_amount: 10000
+      method: ach
+    - max_amount: null  # unlimited
+      method: wire
+
+# =============================================================================
+# Risk Scoring
+# =============================================================================
+risk:
+  # Points assigned to each flag type (higher = more risky)
+  flag_weights:
+    fraud_suspect: 100
+    blacklisted_vendor: 100
+    unknown_item: 50
+    stock_exceeded: 30
+    negative_qty: 40
+    missing_vendor: 60
+    high_value: 20
+    foreign_currency: 15
+    fuzzy_match: 10
+    amount_mismatch: 25
+    duplicate_invoice: 80
+
+  # Risk thresholds
+  thresholds:
+    low: 0
+    medium: 25
+    high: 50
+    critical: 100
