@@ -43,6 +43,9 @@ uv run streamlit run src/ui/app.py
 
 > **Note:** On a fresh system, always use `uv sync --all-extras` to ensure all dependencies (including dev/test) are installed. Plain `uv sync` skips optional extras.
 
+## Demo 
+<video src="demo/demo.mp4" width="320" height="240" controls></video>
+
 ## Architecture
 
 ```mermaid
