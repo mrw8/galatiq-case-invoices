@@ -1,0 +1,366 @@
+"""LLM client interface and implementations."""
+
+import hashlib
+import json
+import os
+from abc import ABC, abstractmethod
+from typing import Any, TypeVar
+
+from pydantic import BaseModel
+
+T = TypeVar("T", bound=BaseModel)
+
+
+class LLMClient(ABC):
+    """Abstract interface for LLM backends."""
+
+    @abstractmethod
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> str:
+        """Send a chat completion request and return the response text."""
+        ...
+
+    @abstractmethod
+    def chat_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> dict[str, Any]:
+        """Send a chat request expecting JSON response."""
+        ...
+
+    def extract_structured(
+        self,
+        messages: list[dict[str, str]],
+        response_model: type[T],
+        max_retries: int = 2,
+    ) -> T:
+        """
+        Extract structured data into a Pydantic model.
+
+        Implements self-correction loop: if parsing fails,
+        re-prompts with the error up to max_retries times.
+        """
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = self.chat_json(messages)
+                return response_model.model_validate(response)
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    # Add error feedback for self-correction
+                    error_msg = f"JSON parsing/validation failed: {e}. Please fix and try again."
+                    messages = [*messages, {"role": "user", "content": error_msg}]
+
+        raise ValueError(f"Failed to extract structured data after {max_retries + 1} attempts") from last_error
+
+
+class MockClient(LLMClient):
+    """
+    Deterministic mock LLM client for testing.
+
+    Returns predictable responses based on input hashes,
+    allowing fully offline operation and reproducible tests.
+    """
+
+    def __init__(self, responses: dict[str, str] | None = None):
+        """
+        Initialize mock client.
+
+        Args:
+            responses: Optional dict mapping input hashes to responses.
+                       If not provided, uses built-in mock responses.
+        """
+        self._custom_responses = responses or {}
+        self._call_count = 0
+
+    def _hash_input(self, messages: list[dict[str, str]]) -> str:
+        """Create a deterministic hash of the input messages."""
+        content = json.dumps(messages, sort_keys=True)
+        return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> str:
+        """Return mock response based on message content."""
+        self._call_count += 1
+        input_hash = self._hash_input(messages)
+
+        # Check for custom response first
+        if input_hash in self._custom_responses:
+            return self._custom_responses[input_hash]
+
+        # Analyze the last user message to determine response type
+        last_user_msg = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                last_user_msg = msg.get("content", "").lower()
+                break
+
+        # Return appropriate mock response based on context
+        return self._generate_mock_response(last_user_msg)
+
+    def chat_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> dict[str, Any]:
+        """Return mock JSON response."""
+        response = self.chat(messages, temperature, max_tokens)
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            # If response isn't JSON, wrap it
+            return {"response": response}
+
+    def _generate_mock_response(self, context: str) -> str:
+        """Generate appropriate mock response based on context keywords."""
+
+        # Invoice extraction context
+        if "extract" in context and "invoice" in context:
+            return self._mock_invoice_extraction(context)
+
+        # Validation context
+        if "validate" in context or "check" in context:
+            return self._mock_validation_response(context)
+
+        # Approval context
+        if "approve" in context or "decision" in context:
+            return self._mock_approval_response(context)
+
+        # Critique context
+        if "critique" in context or "review" in context:
+            return self._mock_critique_response(context)
+
+        # Default response
+        return json.dumps({"status": "ok", "message": "Mock response"})
+
+    def _mock_invoice_extraction(self, context: str) -> str:
+        """Generate mock invoice extraction response."""
+        # Default mock invoice
+        invoice_data = {
+            "invoice_number": "INV-MOCK-001",
+            "vendor": {
+                "name": "Mock Vendor Inc.",
+                "address": "123 Test Street",
+            },
+            "date": "2026-01-15",
+            "due_date": "2026-02-15",
+            "line_items": [
+                {"item": "WidgetA", "quantity": 5, "unit_price": 250.00},
+                {"item": "WidgetB", "quantity": 3, "unit_price": 500.00},
+            ],
+            "subtotal": 2750.00,
+            "tax_rate": 0.0,
+            "tax_amount": 0.0,
+            "total": 2750.00,
+            "currency": "USD",
+            "payment_terms": "Net 30",
+        }
+
+        # Adjust based on context hints
+        if "1001" in context:
+            invoice_data["invoice_number"] = "INV-1001"
+            invoice_data["vendor"]["name"] = "Widgets Inc."
+            invoice_data["line_items"] = [
+                {"item": "WidgetA", "quantity": 10, "unit_price": 250.00},
+                {"item": "WidgetB", "quantity": 5, "unit_price": 500.00},
+            ]
+            invoice_data["total"] = 5000.00
+            invoice_data["subtotal"] = 5000.00
+
+        elif "1002" in context:
+            invoice_data["invoice_number"] = "INV-1002"
+            invoice_data["vendor"]["name"] = "Gadgets Co."
+            invoice_data["line_items"] = [
+                {"item": "GadgetX", "quantity": 20, "unit_price": 750.00},
+            ]
+            invoice_data["total"] = 15000.00
+            invoice_data["subtotal"] = 15000.00
+
+        elif "1003" in context:
+            invoice_data["invoice_number"] = "INV-1003"
+            invoice_data["vendor"]["name"] = "Fraudster LLC"
+            invoice_data["line_items"] = [
+                {"item": "FakeItem", "quantity": 100, "unit_price": 1000.00},
+            ]
+            invoice_data["total"] = 100000.00
+            invoice_data["subtotal"] = 100000.00
+
+        elif "1009" in context:
+            invoice_data["invoice_number"] = "INV-1009"
+            invoice_data["vendor"]["name"] = ""
+            invoice_data["due_date"] = None
+            invoice_data["line_items"] = [
+                {"item": "WidgetA", "quantity": -5, "unit_price": 250.00},
+                {"item": "WidgetB", "quantity": 2, "unit_price": 500.00},
+            ]
+            invoice_data["total"] = -250.00
+
+        elif "1016" in context:
+            invoice_data["invoice_number"] = "INV-1016"
+            invoice_data["vendor"]["name"] = "Widgets Inc."
+            invoice_data["line_items"] = [
+                {"item": "WidgetA", "quantity": 4, "unit_price": 250.00},
+                {"item": "WidgetB", "quantity": 2, "unit_price": 500.00},
+                {"item": "WidgetC", "quantity": 3, "unit_price": 350.00},
+            ]
+            invoice_data["total"] = 3233.00
+
+        return json.dumps(invoice_data)
+
+    def _mock_validation_response(self, context: str) -> str:
+        """Generate mock validation response."""
+        return json.dumps({
+            "is_valid": True,
+            "flags": [],
+            "message": "Validation passed",
+        })
+
+    def _mock_approval_response(self, context: str) -> str:
+        """Generate mock approval decision."""
+        return json.dumps({
+            "status": "APPROVED",
+            "reasoning": "Invoice meets all criteria. Vendor is known, items are in stock, and amount is within normal range.",
+            "rules_applied": ["stock_check", "vendor_check", "amount_threshold"],
+        })
+
+    def _mock_critique_response(self, context: str) -> str:
+        """Generate mock critique response."""
+        return json.dumps({
+            "accepted": True,
+            "reasoning": "Decision is well-reasoned and follows all approval rules.",
+            "suggested_changes": None,
+        })
+
+    @property
+    def call_count(self) -> int:
+        """Number of times the client has been called."""
+        return self._call_count
+
+    def reset(self) -> None:
+        """Reset call count for testing."""
+        self._call_count = 0
+
+
+class GrokClient(LLMClient):
+    """
+    xAI Grok client using OpenAI-compatible API.
+
+    Uses the openai SDK with xAI's base URL.
+    API key should be set via XAI_API_KEY environment variable.
+    """
+
+    BASE_URL = "https://api.x.ai/v1"
+    DEFAULT_MODEL = "grok-beta"  # Update when grok-3 is available
+
+    def __init__(self, api_key: str | None = None, model: str | None = None):
+        """
+        Initialize Grok client.
+
+        Args:
+            api_key: xAI API key. Falls back to XAI_API_KEY env var.
+            model: Model name. Defaults to grok-beta.
+        """
+        self._api_key = api_key or os.getenv("XAI_API_KEY")
+        self._model = model or self.DEFAULT_MODEL
+        self._client: Any = None  # Lazy init
+
+    def _get_client(self) -> Any:
+        """Lazily initialize OpenAI client with xAI base URL."""
+        if self._client is None:
+            if not self._api_key:
+                raise ValueError(
+                    "xAI API key not found. Set XAI_API_KEY environment variable "
+                    "or pass api_key to GrokClient."
+                )
+            try:
+                from openai import OpenAI
+            except ImportError as e:
+                raise ImportError("openai package required for GrokClient: pip install openai") from e
+
+            self._client = OpenAI(
+                api_key=self._api_key,
+                base_url=self.BASE_URL,
+            )
+        return self._client
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> str:
+        """Send chat completion to Grok."""
+        client = self._get_client()
+        response = client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content or ""
+
+    def chat_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> dict[str, Any]:
+        """Send chat request expecting JSON response."""
+        # Add JSON instruction to system message if not present
+        json_instruction = "Respond with valid JSON only. No markdown, no explanations."
+
+        enhanced_messages = list(messages)
+        if enhanced_messages and enhanced_messages[0].get("role") == "system":
+            enhanced_messages[0] = {
+                "role": "system",
+                "content": f"{enhanced_messages[0]['content']}\n\n{json_instruction}",
+            }
+        else:
+            enhanced_messages.insert(0, {"role": "system", "content": json_instruction})
+
+        response = self.chat(enhanced_messages, temperature, max_tokens)
+
+        # Strip markdown code blocks if present
+        response = response.strip()
+        if response.startswith("```json"):
+            response = response[7:]
+        if response.startswith("```"):
+            response = response[3:]
+        if response.endswith("```"):
+            response = response[:-3]
+        response = response.strip()
+
+        return json.loads(response)
+
+
+def get_client(backend: str | None = None) -> LLMClient:
+    """
+    Factory function to get the appropriate LLM client.
+
+    Args:
+        backend: "mock" or "grok". Defaults to LLM_BACKEND env var, then "mock".
+
+    Returns:
+        Configured LLMClient instance.
+    """
+    backend = backend or os.getenv("LLM_BACKEND", "mock")
+
+    if backend == "mock":
+        return MockClient()
+    elif backend == "grok":
+        return GrokClient()
+    else:
+        raise ValueError(f"Unknown LLM backend: {backend}. Use 'mock' or 'grok'.")
