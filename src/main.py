@@ -5,10 +5,14 @@ import json
 import sys
 from pathlib import Path
 
+import structlog
+
 from src.db.seed import seed_database
 from src.graph.pipeline import run_batch, run_pipeline
 from src.llm.client import get_client
-from src.utils.logging import setup_logging, write_trace
+from src.utils.logging import setup_logging
+
+log = structlog.get_logger()
 
 
 def main() -> int:
@@ -58,11 +62,6 @@ Examples:
         action="store_true",
         help="Output results as JSON",
     )
-    parser.add_argument(
-        "--no-trace",
-        action="store_true",
-        help="Don't write trace files to runs/",
-    )
 
     args = parser.parse_args()
 
@@ -74,8 +73,10 @@ Examples:
 
     # Handle database initialization
     if args.init_db:
+        log.info("database_init_started")
         print("Initializing database...")
         seed_database(args.db_path, reset=True)
+        log.info("database_init_completed")
         print("Database initialized successfully.")
         return 0
 
@@ -87,6 +88,7 @@ Examples:
     # Check if database exists, if not create it
     db_path = Path(args.db_path)
     if not db_path.exists():
+        log.info("database_auto_init")
         print(f"Database not found at {db_path}, initializing...")
         seed_database(db_path)
 
@@ -98,28 +100,37 @@ Examples:
 
     if invoice_path.is_dir():
         # Batch mode
+        log.info("batch_processing_started", file_count="scanning")
         print(f"Processing all invoices in {invoice_path}...")
         results = run_batch(str(invoice_path), llm_client=client, db_path=str(db_path))
+        
+        # Log batch summary (non-identifying)
+        status_counts = {}
+        for r in results:
+            status = r.final_status
+            status_counts[status] = status_counts.get(status, 0) + 1
+        log.info("batch_processing_completed", 
+                 total_count=len(results), 
+                 status_summary=status_counts)
+        
         _print_batch_results(results, args.json)
-
-        # Write traces
-        if not args.no_trace:
-            for result in results:
-                write_trace(result.run_id, result.events)
 
     elif invoice_path.is_file():
         # Single file mode
+        log.info("single_invoice_processing_started")
         print(f"Processing {invoice_path}...")
         result = run_pipeline(str(invoice_path), llm_client=client, db_path=str(db_path))
+        
+        # Log result (non-identifying: just run_id and status)
+        log.info("single_invoice_processing_completed",
+                 run_id=result.run_id,
+                 final_status=result.final_status,
+                 duration_ms=result.to_summary().get("duration_ms"))
+        
         _print_single_result(result, args.json)
 
-        # Write trace
-        if not args.no_trace:
-            trace_path = write_trace(result.run_id, result.events)
-            if not args.json:
-                print(f"\nTrace written to: {trace_path}")
-
     else:
+        log.error("path_not_found")
         print(f"Error: Path not found: {invoice_path}")
         return 1
 

@@ -249,5 +249,3 @@ Duration: 13ms
 ```
 
 ---
-
-*Built for the Galatiq case study. See [CASE_STUDY.md](CASE_STUDY.md) for original requirements.*

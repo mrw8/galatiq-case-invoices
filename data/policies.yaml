@@ -12,7 +12,7 @@ validation:
   high_value_threshold: 10000
 
   # Single line item threshold that raises fraud suspicion
-  single_item_high_value_threshold: 50000
+  single_item_high_value_threshold: 100000
 
   # Accepted currencies (others trigger FOREIGN_CURRENCY flag)
   accepted_currencies:

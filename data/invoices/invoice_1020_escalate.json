@@ -1,0 +1,25 @@
+{
+  "invoice_number": "INV-1020",
+  "vendor": {
+    "name": "Global Supply Chain Partners",
+    "address": "100 International Way, London, UK"
+  },
+  "date": "2026-03-01",
+  "due_date": "2026-03-31",
+  "line_items": [
+    {
+      "item": "WidgetA",
+      "description": "Standard Widget Type A",
+      "quantity": 10,
+      "unit_price": 225.00,
+      "total": 2250.00
+    }
+  ],
+  "subtotal": 2250.00,
+  "tax_rate": 0.0,
+  "tax_amount": 0.00,
+  "total": 2250.00,
+  "currency": "EUR",
+  "payment_terms": "Net 30",
+  "notes": "This invoice uses EUR currency and will always escalate to human review"
+}

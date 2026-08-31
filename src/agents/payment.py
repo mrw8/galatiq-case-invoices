@@ -5,10 +5,14 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+import structlog
+
 from src.db.queries import record_processed_invoice
 from src.models.invoice import ApprovalStatus
 from src.models.pipeline import PipelineState
 from src.utils.logging import AgentLogger
+
+log = structlog.get_logger()
 
 
 class PaymentAgent:
@@ -114,7 +118,34 @@ class PaymentAgent:
             "reference": result.get("reference"),
         })
 
+        # Deduct inventory after successful payment
+        if result.get("status") == "success":
+            self._deduct_inventory(invoice, logger)
+
         return result
+
+    def _deduct_inventory(self, invoice, logger: AgentLogger) -> None:
+        """Deduct line items from inventory after successful payment."""
+        from src.db.queries import deduct_inventory
+        
+        # Build list of (item_name, quantity) tuples
+        items_to_deduct = [
+            (item.item, item.quantity) 
+            for item in invoice.line_items
+        ]
+        
+        db_kwargs = {"db_path": self.db_path} if self.db_path else {}
+        result = deduct_inventory(items_to_deduct, **db_kwargs)
+        
+        if result["deducted"]:
+            logger.event("inventory_deducted", {
+                "items": result["deducted"],
+            })
+        
+        if result["errors"]:
+            logger.event("inventory_deduction_errors", {
+                "errors": result["errors"],
+            })
 
     def _log_rejection(self, state: PipelineState, logger: AgentLogger) -> None:
         """Log rejected invoice to rejections file."""
@@ -200,8 +231,8 @@ def mock_payment(vendor: str, amount: float, invoice_number: str) -> dict:
     # Generate a mock payment reference
     reference = f"PAY-{uuid.uuid4().hex[:8].upper()}"
 
-    print(f"[MOCK PAYMENT] Paid ${amount:,.2f} to {vendor}")
-    print(f"[MOCK PAYMENT] Reference: {reference}")
+    # Log payment (non-identifying: just reference and status)
+    log.debug("mock_payment_processed", reference=reference, status="success")
 
     return {
         "status": "success",

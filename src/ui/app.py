@@ -22,8 +22,8 @@ st.set_page_config(
 
 # Constants
 SAMPLE_INVOICES_DIR = Path(__file__).parent.parent.parent / "data" / "invoices"
-RUNS_DIR = Path(__file__).parent.parent.parent / "runs"
 DB_PATH = Path(__file__).parent.parent.parent / "inventory.db"
+AUDIT_DB_PATH = Path(__file__).parent.parent.parent / "audit.db"
 
 
 def init_database():
@@ -44,19 +44,45 @@ def get_sample_invoices() -> list[Path]:
 
 
 def get_past_runs() -> list[dict]:
-    """Load past runs from runs/ directory."""
-    if not RUNS_DIR.exists():
+    """Load past runs from audit database."""
+    audit_db = Path(__file__).parent.parent.parent / "audit.db"
+    if not audit_db.exists():
         return []
     
-    runs = []
-    for f in sorted(RUNS_DIR.glob("*.json"), reverse=True)[:20]:  # Last 20 runs
-        try:
-            with open(f) as fp:
-                data = json.load(fp)
-                runs.append(data)
-        except Exception:
-            continue
-    return runs
+    try:
+        from src.audit.trail import AuditTrail
+        import sqlite3
+        
+        audit = AuditTrail(audit_db)
+        
+        # Get unique run_ids ordered by most recent
+        conn = sqlite3.connect(audit_db)
+        conn.row_factory = sqlite3.Row
+        
+        cursor = conn.execute("""
+            SELECT run_id, MIN(timestamp) as started
+            FROM audit_events 
+            GROUP BY run_id 
+            ORDER BY started DESC 
+            LIMIT 20
+        """)
+        run_ids = [row["run_id"] for row in cursor.fetchall()]
+        conn.close()
+        
+        runs = []
+        for run_id in run_ids:
+            events = audit.get_by_run(run_id)
+            if events:
+                runs.append({
+                    "run_id": run_id,
+                    "timestamp": events[0].timestamp.isoformat() if events else None,
+                    "event_count": len(events),
+                    "events": [e.model_dump(mode="json") for e in events],
+                })
+        
+        return runs
+    except Exception:
+        return []
 
 
 def status_badge(status: str) -> str:
@@ -69,6 +95,10 @@ def status_badge(status: str) -> str:
         "rejected": ":red[REJECTED]",
         "escalated": ":orange[ESCALATED]",
         "error": ":red[ERROR]",
+        "approved_after_review": ":green[APPROVED (Review)]",
+        "rejected_after_review": ":red[REJECTED (Review)]",
+        "paid_after_review": ":green[PAID (Review)]",
+        "pending_review": ":orange[PENDING REVIEW]",
     }
     return colors.get(status, f":gray[{status}]")
 
@@ -91,19 +121,102 @@ def flag_badge(flag: str) -> str:
     return f":gray[{flag}]"
 
 
+def init_session_state():
+    """Initialize default session state values."""
+    from src.workflow.review import ApprovalLevel
+    
+    if "persona_username" not in st.session_state:
+        st.session_state.persona_username = "demo_user"
+    if "persona_display_name" not in st.session_state:
+        st.session_state.persona_display_name = "Demo User"
+    if "persona_level" not in st.session_state:
+        st.session_state.persona_level = ApprovalLevel.L1
+    if "nav_page" not in st.session_state:
+        st.session_state.nav_page = "Process Invoice"
+
+
 def render_sidebar():
     """Render sidebar with navigation and info."""
+    from src.workflow.review import ApprovalLevel
+    
+    init_session_state()
+    
     with st.sidebar:
         st.title("Invoice Processor")
         st.caption("Multi-agent invoice automation")
         
         st.divider()
         
-        # Navigation
+        # Current persona display with edit toggle
+        st.markdown("##### 👤 Current User")
+        
+        level_colors = {
+            ApprovalLevel.L1: "🟢",
+            ApprovalLevel.L2: "🔵", 
+            ApprovalLevel.L3: "🟣",
+            ApprovalLevel.ADMIN: "🔴",
+        }
+        level_icon = level_colors.get(st.session_state.persona_level, "⚪")
+        
+        # Show current persona
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(f"**{st.session_state.persona_display_name}**")
+            st.caption(f"{level_icon} {st.session_state.persona_level.name}")
+        with col2:
+            edit_persona = st.button("✏️", key="edit_persona", help="Change persona")
+        
+        # Edit persona expander
+        if edit_persona or st.session_state.get("show_persona_edit"):
+            st.session_state.show_persona_edit = True
+            
+            with st.container():
+                st.markdown("---")
+                new_username = st.text_input(
+                    "Username", 
+                    value=st.session_state.persona_username,
+                    key="edit_username"
+                )
+                new_display = st.text_input(
+                    "Display Name",
+                    value=st.session_state.persona_display_name,
+                    key="edit_display"
+                )
+                new_level = st.selectbox(
+                    "Role",
+                    options=[ApprovalLevel.L1, ApprovalLevel.L2, ApprovalLevel.L3, ApprovalLevel.ADMIN],
+                    index=[ApprovalLevel.L1, ApprovalLevel.L2, ApprovalLevel.L3, ApprovalLevel.ADMIN].index(
+                        st.session_state.persona_level
+                    ),
+                    format_func=lambda x: f"{level_colors.get(x, '')} {x.name}",
+                    key="edit_level"
+                )
+                
+                def save_persona():
+                    st.session_state.persona_username = st.session_state.edit_username
+                    st.session_state.persona_display_name = st.session_state.edit_display
+                    st.session_state.persona_level = st.session_state.edit_level
+                    st.session_state.show_persona_edit = False
+                
+                def cancel_persona():
+                    st.session_state.show_persona_edit = False
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.button("Save", type="primary", use_container_width=True, on_click=save_persona)
+                with col2:
+                    st.button("Cancel", use_container_width=True, on_click=cancel_persona)
+                st.markdown("---")
+        
+        st.divider()
+        
+        # Navigation - key preserves selection across reruns
+        nav_options = ["Process Invoice", "Review Queue", "Past Runs", "Database Info"]
         page = st.radio(
             "Navigate",
-            ["Process Invoice", "Past Runs", "Database Info"],
+            nav_options,
             label_visibility="collapsed",
+            key="nav_page",
         )
         
         st.divider()
@@ -129,13 +242,31 @@ def render_process_page():
         
         input_method = st.radio(
             "Input method",
-            ["Upload file", "Select sample"],
+            ["Select sample", "Upload file"],  # Sample first (default)
             horizontal=True,
         )
         
         invoice_path = None
         
-        if input_method == "Upload file":
+        if input_method == "Select sample":
+            samples = get_sample_invoices()
+            if samples:
+                sample_names = [f.name for f in samples]
+                selected = st.selectbox("Select sample invoice", sample_names)
+                if selected:
+                    invoice_path = str(SAMPLE_INVOICES_DIR / selected)
+                    
+                    # Show preview
+                    with st.expander("Preview content", expanded=True):
+                        try:
+                            content = Path(invoice_path).read_text()[:2000]
+                            st.code(content, language="text")
+                        except Exception:
+                            st.warning("Cannot preview binary file")
+            else:
+                st.warning("No sample invoices found")
+        
+        else:  # Upload file
             uploaded = st.file_uploader(
                 "Upload invoice",
                 type=["txt", "json", "csv", "xml", "pdf"],
@@ -147,24 +278,6 @@ def render_process_page():
                     tmp.write(uploaded.getvalue())
                     invoice_path = tmp.name
                 st.success(f"Uploaded: {uploaded.name}")
-        
-        else:  # Select sample
-            samples = get_sample_invoices()
-            if samples:
-                sample_names = [f.name for f in samples]
-                selected = st.selectbox("Select sample invoice", sample_names)
-                if selected:
-                    invoice_path = str(SAMPLE_INVOICES_DIR / selected)
-                    
-                    # Show preview
-                    with st.expander("Preview content"):
-                        try:
-                            content = Path(invoice_path).read_text()[:2000]
-                            st.code(content, language="text")
-                        except Exception:
-                            st.warning("Cannot preview binary file")
-            else:
-                st.warning("No sample invoices found")
         
         # Process button
         if invoice_path:
@@ -402,25 +515,36 @@ def render_past_runs_page():
         st.info("No past runs found. Process some invoices first!")
         return
     
-    st.markdown(f"Showing last {len(runs)} runs")
+    st.markdown(f"Showing last {len(runs)} runs (from audit trail)")
     
     for run in runs:
         run_id = run.get("run_id", "unknown")
         events = run.get("events", [])
         
-        # Extract summary from events
+        # Extract summary from audit events
         invoice_num = "N/A"
         status = "unknown"
         
         for event in events:
-            if event.get("event_type") == "completed":
-                data = event.get("data", {})
-                if "invoice_number" in data:
-                    invoice_num = data["invoice_number"]
-                if "payment_status" in data:
-                    status = data["payment_status"]
-                if "status" in data and event.get("agent") == "approval":
-                    status = data["status"]
+            action = event.get("action", "")
+            
+            # Get invoice number from any event that has it
+            if event.get("invoice_number"):
+                invoice_num = event["invoice_number"]
+            
+            # Determine final status from action (later events override earlier)
+            if action == "payment_processed":
+                status = "success"
+            elif action == "invoice_rejected":
+                status = "rejected"
+            elif action == "invoice_escalated":
+                status = "escalated"
+            elif action == "human_approved":
+                status = "approved_after_review"
+            elif action == "human_rejected":
+                status = "rejected_after_review"
+            elif action == "error_occurred":
+                status = "error"
         
         with st.expander(f"{run_id} - {invoice_num} - {status_badge(status)}"):
             st.json(run)
@@ -459,12 +583,434 @@ def render_database_page():
     
     conn.close()
     
-    # Reset button
+    # Audit trail info
+    st.subheader("Audit Trail")
+    audit_db = Path(__file__).parent.parent.parent / "audit.db"
+    if audit_db.exists():
+        import sqlite3
+        conn = sqlite3.connect(audit_db)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute("SELECT COUNT(*) FROM audit_events")
+        event_count = cursor.fetchone()[0]
+        cursor = conn.execute("SELECT COUNT(DISTINCT run_id) FROM audit_events")
+        run_count = cursor.fetchone()[0]
+        
+        col1, col2 = st.columns(2)
+        col1.metric("Total Events", event_count)
+        col2.metric("Total Runs", run_count)
+        
+        # Show recent audit events in expander
+        with st.expander("📜 Recent Audit Events (last 50)"):
+            cursor = conn.execute("""
+                SELECT run_id, invoice_number, action, actor, timestamp, details 
+                FROM audit_events 
+                ORDER BY timestamp DESC 
+                LIMIT 50
+            """)
+            events = cursor.fetchall()
+            
+            if events:
+                for event in events:
+                    action = event["action"]
+                    action_icon = {
+                        "invoice_received": "📥",
+                        "payment_processed": "💳",
+                        "invoice_rejected": "❌",
+                        "invoice_escalated": "⚠️",
+                        "human_approved": "✅",
+                        "human_rejected": "🚫",
+                        "error_occurred": "💥",
+                    }.get(action, "⚪")
+                    
+                    invoice = event['invoice_number'] or 'N/A'
+                    with st.expander(f"{action_icon} `{event['run_id'][:20]}...` | {invoice} | {action}"):
+                        st.write(f"**Timestamp:** {event['timestamp']}")
+                        st.write(f"**Invoice:** {invoice}")
+                        st.write(f"**Action:** {action}")
+                        st.write(f"**Actor:** {event['actor']}")
+                        if event['details']:
+                            try:
+                                data = json.loads(event['details'])
+                                st.json(data)
+                            except (json.JSONDecodeError, TypeError):
+                                st.code(event['details'])
+            else:
+                st.info("No audit events yet")
+        
+        conn.close()
+    else:
+        st.info("No audit trail yet")
+    
+    # Review queue info
+    st.subheader("Review Queue")
+    review_db = Path(__file__).parent.parent.parent / "review.db"
+    if review_db.exists():
+        import sqlite3
+        conn = sqlite3.connect(review_db)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute("SELECT status, COUNT(*) FROM review_items GROUP BY status")
+        stats = {row[0]: row[1] for row in cursor.fetchall()}
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Pending", stats.get("pending", 0))
+        col2.metric("Assigned", stats.get("assigned", 0))
+        col3.metric("Completed", stats.get("completed", 0))
+        
+        # Show completed reviews in expander
+        completed_count = stats.get("completed", 0)
+        if completed_count > 0:
+            with st.expander(f"✅ Completed Reviews ({completed_count})"):
+                cursor = conn.execute("""
+                    SELECT * FROM review_items 
+                    WHERE status = 'completed' 
+                    ORDER BY updated_at DESC 
+                    LIMIT 20
+                """)
+                completed = cursor.fetchall()
+                
+                for row in completed:
+                    try:
+                        decision = json.loads(row['decision']) if row['decision'] else {}
+                    except (json.JSONDecodeError, TypeError):
+                        decision = {}
+                    
+                    action = decision.get("action", "unknown")
+                    reviewer = decision.get("reviewer", "unknown")
+                    action_icon = "✅" if action == "approve" else "❌" if action == "reject" else "↩️"
+                    
+                    with st.expander(f"{action_icon} {row['invoice_number']} - {row['vendor']} - ${row['amount']:,.2f}"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write(f"**Action:** {action.upper()}")
+                            st.write(f"**Reviewer:** {reviewer}")
+                            st.write(f"**Completed:** {row['updated_at']}")
+                        with col2:
+                            st.write(f"**Run ID:** `{row['run_id']}`")
+                            st.write(f"**Amount:** ${row['amount']:,.2f}")
+                            st.write(f"**Reason:** {row['escalation_reason'][:50]}...")
+                        
+                        if decision.get("notes"):
+                            st.info(f"**Notes:** {decision.get('notes')}")
+        
+        conn.close()
+    else:
+        st.info("No review queue yet")
+    
+    # Reset/Clear buttons
     st.divider()
-    if st.button("Reset Database", type="secondary"):
-        seed_database(DB_PATH, reset=True)
-        st.success("Database reset!")
-        st.rerun()
+    st.subheader("🗑️ Data Management")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("Clear Audit Trail", type="secondary", use_container_width=True):
+            audit_db = Path(__file__).parent.parent.parent / "audit.db"
+            if audit_db.exists():
+                import sqlite3
+                conn = sqlite3.connect(audit_db)
+                conn.execute("DELETE FROM audit_events")
+                conn.commit()
+                conn.close()
+                st.success("Audit trail cleared!")
+                st.rerun()
+            else:
+                st.info("No audit trail to clear")
+    
+    with col2:
+        if st.button("Clear Review Queue", type="secondary", use_container_width=True):
+            review_db = Path(__file__).parent.parent.parent / "review.db"
+            if review_db.exists():
+                import sqlite3
+                conn = sqlite3.connect(review_db)
+                conn.execute("DELETE FROM review_items")
+                conn.execute("DELETE FROM reviewers")
+                conn.commit()
+                conn.close()
+                st.success("Review queue cleared!")
+                st.rerun()
+            else:
+                st.info("No review queue to clear")
+    
+    with col3:
+        if st.button("Reset All Data", type="primary", use_container_width=True):
+            # Reset inventory DB
+            seed_database(DB_PATH, reset=True)
+            
+            # Clear audit trail
+            audit_db = Path(__file__).parent.parent.parent / "audit.db"
+            if audit_db.exists():
+                import sqlite3
+                conn = sqlite3.connect(audit_db)
+                conn.execute("DELETE FROM audit_events")
+                conn.commit()
+                conn.close()
+            
+            # Clear review queue
+            review_db = Path(__file__).parent.parent.parent / "review.db"
+            if review_db.exists():
+                import sqlite3
+                conn = sqlite3.connect(review_db)
+                conn.execute("DELETE FROM review_items")
+                conn.execute("DELETE FROM reviewers")
+                conn.commit()
+                conn.close()
+            
+            st.success("All data reset!")
+            st.rerun()
+
+
+def render_review_queue_page():
+    """Render the human review queue page with role-based access."""
+    st.header("Review Queue")
+    
+    review_db = Path(__file__).parent.parent.parent / "review.db"
+    
+    # Check if review queue exists
+    if not review_db.exists():
+        st.info("No review queue database found. Escalated invoices will appear here.")
+        st.caption("Process invoices with `enable_review=True` to populate the queue.")
+        return
+    
+    try:
+        from src.workflow.review import ReviewQueue, ReviewAction, ReviewStatus, ApprovalLevel, Reviewer
+        queue = ReviewQueue(review_db)
+    except Exception as e:
+        st.error(f"Failed to load review queue: {e}")
+        return
+    
+    # Get or create reviewer from global persona
+    reviewer = queue.get_or_create_reviewer(
+        username=st.session_state.persona_username,
+        display_name=st.session_state.persona_display_name,
+        level=st.session_state.persona_level,
+    )
+    
+    # Show current role context
+    level_colors = {
+        ApprovalLevel.L1: "🟢",
+        ApprovalLevel.L2: "🔵", 
+        ApprovalLevel.L3: "🟣",
+        ApprovalLevel.ADMIN: "🔴",
+    }
+    level_icon = level_colors.get(reviewer.level, "⚪")
+    st.caption(f"Viewing as: **{reviewer.display_name}** ({level_icon} {reviewer.level.name}) — Change in sidebar")
+    
+    # Get stats
+    stats = queue.get_stats()
+    my_claimed = queue.get_my_claimed(reviewer.username)
+    my_queue = queue.get_for_reviewer(reviewer)
+    unclaimed_in_queue = [i for i in my_queue if i.assigned_to is None]
+    
+    # Metrics row
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("My Claimed", len(my_claimed))
+    with col2:
+        st.metric(f"Available ({reviewer.level.name})", len(unclaimed_in_queue))
+    with col3:
+        st.metric("Total Pending", stats.get("total_pending", 0))
+    with col4:
+        st.metric("Completed", stats.get("completed", 0))
+    
+    st.divider()
+    
+    # Tabs for different views
+    tab1, tab2, tab3 = st.tabs(["My Claimed", "Available to Claim", "Completed"])
+    
+    with tab1:
+        render_my_claimed(queue, reviewer, my_claimed)
+    
+    with tab2:
+        render_available_to_claim(queue, reviewer, unclaimed_in_queue)
+    
+    with tab3:
+        render_completed_reviews(queue)
+
+
+def render_my_claimed(queue, reviewer, items):
+    """Render items claimed by the current reviewer."""
+    from src.workflow.review import ReviewAction, ReviewDecision, complete_approved_review
+    
+    if not items:
+        st.info("You haven't claimed any items yet. Check 'Available to Claim' tab.")
+        return
+    
+    st.markdown(f"**{len(items)} item(s) assigned to you**")
+    
+    for item in items:
+        level_badge = f":blue[L{item.current_level.value}]" if item.current_level.value < 99 else ":red[ADMIN]"
+        
+        with st.expander(f"{level_badge} **{item.invoice_number}** - {item.vendor} - ${item.amount:,.2f}"):
+            st.markdown(f"**Reason:** {item.escalation_reason}")
+            if item.escalation_flags:
+                st.markdown("**Flags:** " + ", ".join([f":orange[{f}]" for f in item.escalation_flags]))
+            st.caption(f"Run ID: {item.run_id} | Created: {item.created_at}")
+            
+            st.divider()
+            
+            notes = st.text_area("Decision notes", key=f"notes_{item.id}")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            # Paths for updating statuses
+            audit_db = Path(__file__).parent.parent.parent / "audit.db"
+            
+            with col1:
+                if st.button("✅ Approve", key=f"approve_{item.id}", type="primary"):
+                    decision = ReviewDecision(
+                        action=ReviewAction.APPROVE,
+                        reviewer=reviewer.username,
+                        reviewer_level=reviewer.level,
+                        notes=notes,
+                    )
+                    updated_item = queue.decide(item.id, decision, audit_db_path=str(audit_db))
+                    
+                    if updated_item:
+                        result = complete_approved_review(updated_item, db_path=str(DB_PATH))
+                        if result.get("status") == "success":
+                            st.success(f"Approved! Ref: {result.get('reference')}")
+                        else:
+                            st.warning(f"Approved but payment failed: {result.get('error')}")
+                    st.rerun()
+            
+            with col2:
+                if st.button("❌ Reject", key=f"reject_{item.id}"):
+                    decision = ReviewDecision(
+                        action=ReviewAction.REJECT,
+                        reviewer=reviewer.username,
+                        reviewer_level=reviewer.level,
+                        notes=notes,
+                    )
+                    queue.decide(item.id, decision, inventory_db_path=str(DB_PATH), audit_db_path=str(audit_db))
+                    st.warning("Rejected!")
+                    st.rerun()
+            
+            with col3:
+                if st.button("⬆️ Escalate", key=f"escalate_{item.id}"):
+                    decision = ReviewDecision(
+                        action=ReviewAction.ESCALATE,
+                        reviewer=reviewer.username,
+                        reviewer_level=reviewer.level,
+                        notes=notes or "Escalated to higher level",
+                    )
+                    queue.decide(item.id, decision)
+                    st.info(f"Escalated to L{item.current_level.value + 1}!")
+                    st.rerun()
+            
+            with col4:
+                if st.button("↩️ Unclaim", key=f"unclaim_{item.id}"):
+                    queue.unassign(item.id)
+                    st.info("Returned to queue")
+                    st.rerun()
+            
+            # Show invoice details
+            if item.invoice_data:
+                with st.expander("📄 Invoice Details"):
+                    st.json(item.invoice_data)
+
+
+def render_available_to_claim(queue, reviewer, items):
+    """Render items available for the reviewer to claim."""
+    if not items:
+        st.info(f"No items available at your level ({reviewer.level.name}).")
+        return
+    
+    st.markdown(f"**{len(items)} item(s) available to claim**")
+    
+    for item in items:
+        level_badge = f":blue[L{item.current_level.value}]" if item.current_level.value < 99 else ":red[ADMIN]"
+        
+        with st.expander(f"{level_badge} **{item.invoice_number}** - {item.vendor} - ${item.amount:,.2f}"):
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.markdown(f"**Reason:** {item.escalation_reason}")
+                if item.escalation_flags:
+                    st.markdown("**Flags:** " + ", ".join([f":orange[{f}]" for f in item.escalation_flags]))
+                st.caption(f"Run ID: {item.run_id} | Priority: {item.priority}")
+            
+            with col2:
+                if st.button("🖐️ Claim", key=f"claim_{item.id}", type="primary"):
+                    queue.assign(item.id, reviewer.username)
+                    st.success("Claimed!")
+                    st.rerun()
+
+
+def render_completed_reviews(queue):
+    """Render completed review items with expandable details."""
+    import sqlite3
+    from src.workflow.review import ReviewStatus
+    
+    conn = sqlite3.connect(queue.db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute(
+        "SELECT * FROM review_items WHERE status = ? ORDER BY updated_at DESC LIMIT 20",
+        (ReviewStatus.COMPLETED.value,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows:
+        st.info("No completed reviews yet.")
+        return
+    
+    st.markdown(f"**{len(rows)} completed review(s)**")
+    
+    for row in rows:
+        decision_data = row["decision"]
+        try:
+            decision = json.loads(decision_data) if decision_data else {}
+        except (json.JSONDecodeError, TypeError):
+            decision = {}
+        
+        action = decision.get("action", "unknown")
+        reviewer = decision.get("reviewer", "unknown")
+        
+        action_icon = "✅" if action == "approve" else "❌" if action == "reject" else "↩️"
+        action_badge = ":green[APPROVED]" if action == "approve" else ":red[REJECTED]" if action == "reject" else f":gray[{action.upper()}]"
+        
+        with st.expander(
+            f"{action_icon} **{row['invoice_number']}** - {row['vendor']} - "
+            f"${row['amount']:,.2f} - {action_badge}"
+        ):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Decision Details**")
+                st.write(f"**Action:** {action_badge}")
+                st.write(f"**Reviewer:** {reviewer}")
+                st.write(f"**Timestamp:** {decision.get('timestamp', 'N/A')}")
+                if decision.get("notes"):
+                    st.write(f"**Notes:** {decision.get('notes')}")
+            
+            with col2:
+                st.markdown("**Invoice Details**")
+                st.write(f"**Run ID:** `{row['run_id']}`")
+                st.write(f"**Amount:** ${row['amount']:,.2f} {row['currency']}")
+                st.write(f"**Created:** {row['created_at']}")
+                st.write(f"**Completed:** {row['updated_at']}")
+            
+            st.markdown("**Escalation Reason**")
+            st.info(row['escalation_reason'])
+            
+            # Show flags if any
+            if row['escalation_flags']:
+                try:
+                    flags = json.loads(row['escalation_flags'])
+                    if flags:
+                        st.markdown("**Flags:** " + ", ".join([f":orange[{f}]" for f in flags]))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            # Show invoice data if available
+            if row['invoice_data']:
+                try:
+                    invoice_data = json.loads(row['invoice_data'])
+                    if invoice_data:
+                        with st.expander("📄 Full Invoice Data"):
+                            st.json(invoice_data)
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
 
 def main():
@@ -473,6 +1019,8 @@ def main():
     
     if page == "Process Invoice":
         render_process_page()
+    elif page == "Review Queue":
+        render_review_queue_page()
     elif page == "Past Runs":
         render_past_runs_page()
     elif page == "Database Info":

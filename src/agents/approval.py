@@ -158,9 +158,22 @@ class ApprovalAgent:
 
             if critique.accepted:
                 # Critic accepts the decision
+                status = proposed_decision["status"]
+                
+                # Handle LLM requesting escalation
+                if status == ApprovalStatus.NEEDS_HUMAN:
+                    return ApprovalDecision(
+                        invoice_number=invoice.invoice_number,
+                        status=ApprovalStatus.NEEDS_HUMAN,
+                        reasoning=proposed_decision["reasoning"],
+                        critique_history=critique_history,
+                        rules_applied=rules_applied + ["llm_requested_escalation"],
+                        escalation_reason=proposed_decision.get("escalation_reason", "LLM requested human review"),
+                    )
+                
                 return ApprovalDecision(
                     invoice_number=invoice.invoice_number,
-                    status=proposed_decision["status"],
+                    status=status,
                     reasoning=proposed_decision["reasoning"],
                     critique_history=critique_history,
                     rules_applied=rules_applied,
@@ -222,9 +235,17 @@ Make your approval decision."""
 
         response = self.llm.chat_json(messages)
 
+        status_str = response.get("status", "REJECTED")
+        # Handle various ways the status might come back
+        if status_str in ("NEEDS_HUMAN", "ESCALATE", "HUMAN_REVIEW"):
+            status = ApprovalStatus.NEEDS_HUMAN
+        else:
+            status = ApprovalStatus(status_str)
+
         return {
-            "status": ApprovalStatus(response.get("status", "REJECTED")),
+            "status": status,
             "reasoning": response.get("reasoning", "No reasoning provided"),
+            "escalation_reason": response.get("escalation_reason"),
         }
 
     def _critique_decision(

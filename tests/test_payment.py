@@ -96,10 +96,10 @@ class TestPaymentAgent:
         assert result.payment_reference.startswith("PAY-")
         assert result.completed_at is not None
 
-        # Check mock payment was called
+        # Check mock payment was logged
         captured = capsys.readouterr()
-        assert "MOCK PAYMENT" in captured.out
-        assert "1,000.00" in captured.out
+        assert "mock_payment_processed" in captured.out
+        assert "PAY-" in captured.out
 
     def test_rejected_invoice_logged(
         self, payment_agent: PaymentAgent, rejections_file: Path

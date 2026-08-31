@@ -70,9 +70,9 @@ uv run python -m src.main --invoice_path data/invoices/invoice_1001.txt
 
 ### High Priority
 
-- [ ] Wire audit/recovery/workflow/feedback into main pipeline
-- [ ] Add review queue page to Streamlit UI
-- [ ] LangGraph integration when environment supports it
+- [x] **Wire audit/recovery/workflow/feedback** — `EnhancedPipeline` in `src/graph/pipeline.py`. Use `enable_audit=True`, `enable_recovery=True`, `enable_review=True` in `create_pipeline()`.
+- [x] **Review queue page** — Added to Streamlit UI. Navigate to "Review Queue" to see pending, assigned, and completed reviews.
+- [x] **LangGraph integration** — `LangGraphPipeline` with conditional routing. Use `use_langgraph=True` in `create_pipeline()` when langgraph is installed.
 - [x] **Policy-as-YAML** — `data/policies.yaml` + `src/policies/loader.py`. Validation thresholds, fraud keywords, approval flag rules all configurable.
 - [x] **Provider failover** — `FailoverClient` in `src/llm/client.py`. Grok → OpenRouter with sticky switching.
 - [x] **Replay mode** — `RecordingClient` + `ReplayClient` for zero-cost demos. Use `LLM_BACKEND=record` to capture, `LLM_BACKEND=replay` to playback.
@@ -82,7 +82,6 @@ uv run python -m src.main --invoice_path data/invoices/invoice_1001.txt
 - [ ] Batch processing analytics dashboard
 - [ ] LLM token cost tracking per run
 - [ ] Test Grok integration with funded API key
-- [ ] **Arithmetic grounding** — LLM only interprets; math verification is authoritative Python code. LLM can't override calculations even with clever prompts.
-- [ ] **Dual observability dashboards** — Separate user-facing (business metrics) vs dev-facing (engineering/perf) Streamlit pages. Different audiences need different insights.
+- [ ] Arithmetic Grounding — LLM only interprets; math verification is authoritative Python code. LLM can't override calculations even with clever prompts.
+- [ ] Dashboards — Separate user-facing (business metrics) vs dev-facing (engineering/perf) Streamlit pages. Different audiences need different insights.
 - [x] **Adversarial test corpus** — `data/invoices/adversarial/` with 5 prompt injection test files + `tests/test_adversarial.py` (8 tests).
-- [ ] **Content-hash deduplication** — Same invoice in different formats (PDF → JSON resubmit) detected as duplicate via content hash. Prevents double-processing of revisions.

@@ -3,7 +3,11 @@
 import sqlite3
 from pathlib import Path
 
+import structlog
+
 DEFAULT_DB_PATH = Path(__file__).parent.parent.parent / "inventory.db"
+
+log = structlog.get_logger()
 
 
 def seed_database(db_path: Path | str = DEFAULT_DB_PATH, reset: bool = False) -> None:
@@ -50,21 +54,26 @@ def seed_database(db_path: Path | str = DEFAULT_DB_PATH, reset: bool = False) ->
         # Create processed invoices table for duplicate detection
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS processed_invoices (
-                invoice_number TEXT PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invoice_number TEXT NOT NULL,
                 processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 status TEXT,
                 total_amount REAL,
                 vendor TEXT,
-                run_id TEXT
+                run_id TEXT UNIQUE
             )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_processed_invoice_number 
+            ON processed_invoices(invoice_number)
         """)
 
         # Seed inventory data
         inventory_data = [
-            ("WidgetA", 15, 250.00, "widget"),
-            ("WidgetB", 10, 500.00, "widget"),
-            ("GadgetX", 5, 750.00, "gadget"),
-            ("FakeItem", 0, 1000.00, "fraudulent"),
+            ("WidgetA", 500, 250.00, "widget"),
+            ("WidgetB", 300, 500.00, "widget"),
+            ("GadgetX", 150, 750.00, "gadget"),
+            ("FakeItem", 0, 1000.00, "fraudulent"),  # Keep at 0 for testing zero-stock scenarios
         ]
 
         cursor.executemany(
@@ -97,6 +106,7 @@ def seed_database(db_path: Path | str = DEFAULT_DB_PATH, reset: bool = False) ->
         )
 
         conn.commit()
+        log.info("database_seeded", item_count=len(inventory_data), vendor_count=len(vendors_data))
         print(f"Database seeded successfully at {db_path}")
         print(f"  - {len(inventory_data)} inventory items")
         print(f"  - {len(vendors_data)} vendors")

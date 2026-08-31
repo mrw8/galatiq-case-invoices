@@ -305,7 +305,7 @@ def record_processed_invoice(
         conn.commit()
         return True
     except sqlite3.IntegrityError:
-        # Duplicate invoice number
+        # Duplicate run_id (same pipeline run tried to record twice)
         return False
 
 
@@ -338,3 +338,123 @@ def check_duplicate_invoice(
             "run_id": row["run_id"],
         }
     return None
+
+
+def deduct_inventory(
+    items: list[tuple[str, int]],
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> dict:
+    """
+    Deduct items from inventory after successful payment.
+    
+    Args:
+        items: List of (item_name, quantity) tuples to deduct
+        db_path: Path to inventory database
+        
+    Returns:
+        Dict with status and details of deductions
+    """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    deducted = []
+    errors = []
+    
+    for item_name, quantity in items:
+        # Input validation to prevent injection and ensure data integrity
+        if not isinstance(item_name, str) or not item_name.strip():
+            errors.append({"item": str(item_name), "error": "invalid_item_name"})
+            continue
+        
+        # Sanitize item name - only allow alphanumeric, spaces, and common chars
+        item_name = item_name.strip()
+        if not all(c.isalnum() or c in " -_." for c in item_name):
+            errors.append({"item": item_name, "error": "invalid_characters_in_name"})
+            continue
+        
+        # Validate quantity is a positive whole number
+        # Reject floats, decimals, negative numbers, zero, and non-numeric values
+        if isinstance(quantity, float):
+            # Reject floats even if they look like whole numbers (e.g., 5.0)
+            if quantity != int(quantity):
+                errors.append({
+                    "item": item_name, 
+                    "error": "decimal_quantity_not_allowed", 
+                    "value": quantity
+                })
+                continue
+            # Convert whole-number floats to int (e.g., 5.0 -> 5)
+            quantity = int(quantity)
+        
+        try:
+            quantity = int(quantity)
+        except (ValueError, TypeError):
+            errors.append({
+                "item": item_name, 
+                "error": "invalid_quantity_type", 
+                "value": str(quantity)
+            })
+            continue
+        
+        if quantity <= 0:
+            errors.append({
+                "item": item_name, 
+                "error": "quantity_must_be_positive", 
+                "value": quantity
+            })
+            continue
+        
+        # First check current stock
+        cursor.execute(
+            "SELECT item, stock FROM inventory WHERE LOWER(item) = LOWER(?)",
+            (item_name,)
+        )
+        row = cursor.fetchone()
+        
+        if not row:
+            errors.append({"item": item_name, "error": "not_found"})
+            continue
+        
+        current_stock = row[1]
+        
+        # Ensure current stock is valid (should always be, but defensive check)
+        if not isinstance(current_stock, int) or current_stock < 0:
+            errors.append({
+                "item": item_name, 
+                "error": "invalid_current_stock", 
+                "current_stock": current_stock
+            })
+            continue
+        
+        new_stock = current_stock - quantity
+        
+        # Ensure we don't go negative
+        if new_stock < 0:
+            errors.append({
+                "item": item_name, 
+                "error": "insufficient_stock",
+                "requested": quantity,
+                "available": current_stock,
+            })
+            continue
+        
+        # Deduct the stock
+        cursor.execute(
+            "UPDATE inventory SET stock = ? WHERE LOWER(item) = LOWER(?)",
+            (new_stock, item_name)
+        )
+        deducted.append({
+            "item": item_name,
+            "quantity": quantity,
+            "previous_stock": current_stock,
+            "new_stock": new_stock,
+        })
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": len(errors) == 0,
+        "deducted": deducted,
+        "errors": errors,
+    }

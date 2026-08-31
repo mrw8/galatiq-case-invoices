@@ -1,5 +1,21 @@
-"""LangGraph pipeline orchestration."""
+"""Pipeline orchestration with optional LangGraph support."""
 
-from src.graph.pipeline import create_pipeline, run_pipeline
+from src.graph.pipeline import (
+    create_pipeline,
+    run_pipeline,
+    run_batch,
+    SimplePipeline,
+    EnhancedPipeline,
+    LangGraphPipeline,
+    LANGGRAPH_AVAILABLE,
+)
 
-__all__ = ["create_pipeline", "run_pipeline"]
+__all__ = [
+    "create_pipeline",
+    "run_pipeline",
+    "run_batch",
+    "SimplePipeline",
+    "EnhancedPipeline",
+    "LangGraphPipeline",
+    "LANGGRAPH_AVAILABLE",
+]

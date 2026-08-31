@@ -95,9 +95,15 @@ class TestValidationAgent:
         flags = {f.flag for f in result.validation_result.flags}
         assert ValidationFlag.UNKNOWN_ITEM in flags
 
-    def test_stock_exceeded_flagged(self, validation_agent: ValidationAgent) -> None:
+    def test_stock_exceeded_flagged(self, validation_agent: ValidationAgent, test_db: Path) -> None:
         """Requesting more than available stock should be flagged."""
-        invoice = make_invoice(items=[("GadgetX", 20, 750.0)])  # Only 5 in stock
+        from src.db.queries import lookup_item
+        
+        # Dynamically get current stock and request more
+        item = lookup_item("GadgetX", test_db)
+        excessive_qty = item.stock + 50
+        
+        invoice = make_invoice(items=[("GadgetX", excessive_qty, 750.0)])
         state = make_state(invoice)
 
         result = validation_agent.run(state)
@@ -193,17 +199,23 @@ class TestValidationAgent:
         flags = {f.flag for f in result.validation_result.flags}
         assert ValidationFlag.FUZZY_MATCH in flags
 
-    def test_aggregates_duplicate_items(self, validation_agent: ValidationAgent) -> None:
+    def test_aggregates_duplicate_items(self, validation_agent: ValidationAgent, test_db: Path) -> None:
         """Should aggregate quantities for duplicate items before checking stock."""
-        # WidgetA stock is 15, two line items totaling 16 should fail
+        from src.db.queries import lookup_item
+        
+        # Dynamically get stock and create quantities that exceed when combined
+        item = lookup_item("WidgetA", test_db)
+        half_stock = item.stock // 2
+        over_half = half_stock + 10  # Two of these will exceed total stock
+        
         invoice = Invoice(
             invoice_number="INV-DUP",
             vendor=Vendor(name="Test Vendor"),
             line_items=[
-                LineItem(item="WidgetA", quantity=10, unit_price=Decimal("250")),
-                LineItem(item="WidgetA", quantity=6, unit_price=Decimal("250")),  # Total 16 > 15
+                LineItem(item="WidgetA", quantity=over_half, unit_price=Decimal("250")),
+                LineItem(item="WidgetA", quantity=over_half, unit_price=Decimal("250")),
             ],
-            total=Decimal("4000"),
+            total=Decimal(str(over_half * 2 * 250)),
         )
         state = make_state(invoice)
 

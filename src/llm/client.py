@@ -147,7 +147,13 @@ class MockClient(LLMClient):
         return json.dumps({"status": "ok", "message": "Mock response"})
 
     def _mock_invoice_extraction(self, context: str) -> str:
-        """Generate mock invoice extraction response."""
+        """Generate mock invoice extraction response.
+        
+        Note: Mock quantities are designed to work with seed data in db/seed.py.
+        For stock-exceeded tests, quantities should exceed seed stock levels.
+        Tests should verify *behavior* (e.g., STOCK_EXCEEDED flag) rather than
+        hardcoding specific stock values.
+        """
         # Default mock invoice
         invoice_data = {
             "invoice_number": "INV-MOCK-001",
@@ -184,10 +190,10 @@ class MockClient(LLMClient):
             invoice_data["invoice_number"] = "INV-1002"
             invoice_data["vendor"]["name"] = "Gadgets Co."
             invoice_data["line_items"] = [
-                {"item": "GadgetX", "quantity": 20, "unit_price": 750.00},
+                {"item": "GadgetX", "quantity": 200, "unit_price": 750.00},  # Exceeds stock of 150
             ]
-            invoice_data["total"] = 15000.00
-            invoice_data["subtotal"] = 15000.00
+            invoice_data["total"] = 150000.00
+            invoice_data["subtotal"] = 150000.00
 
         elif "1003" in context:
             invoice_data["invoice_number"] = "INV-1003"
@@ -228,6 +234,70 @@ class MockClient(LLMClient):
             ]
             invoice_data["total"] = 3233.00
 
+        elif "1017" in context:
+            invoice_data["invoice_number"] = "INV-1017"
+            invoice_data["vendor"]["name"] = "Widgets Inc."
+            invoice_data["line_items"] = [
+                {"item": "WidgetA", "quantity": 250, "unit_price": 250.00},
+            ]
+            invoice_data["total"] = 62500.00
+            invoice_data["subtotal"] = 62500.00
+
+        elif "1018" in context:
+            invoice_data["invoice_number"] = "INV-1018"
+            invoice_data["vendor"]["name"] = "MegaWidgets Corp"
+            invoice_data["line_items"] = [
+                {"item": "WidgetA", "quantity": 250, "unit_price": 250.00},
+            ]
+            invoice_data["total"] = 62500.00
+            invoice_data["subtotal"] = 62500.00
+
+        elif "1019" in context:
+            invoice_data["invoice_number"] = "INV-1019"
+            invoice_data["vendor"]["name"] = "Precision Parts Ltd."
+            invoice_data["line_items"] = [
+                {"item": "WidgetA", "quantity": 250, "unit_price": 250.00},
+                {"item": "WidgetB", "quantity": 50, "unit_price": 500.00},
+            ]
+            invoice_data["total"] = 87500.00
+            invoice_data["subtotal"] = 87500.00
+
+        elif "1020" in context:
+            # Foreign currency invoice - always escalates to human review
+            invoice_data["invoice_number"] = "INV-1020"
+            invoice_data["vendor"]["name"] = "Global Supply Chain Partners"
+            invoice_data["currency"] = "EUR"  # Triggers FOREIGN_CURRENCY flag
+            invoice_data["line_items"] = [
+                {"item": "WidgetA", "quantity": 10, "unit_price": 225.00},
+            ]
+            invoice_data["total"] = 2250.00
+            invoice_data["subtotal"] = 2250.00
+
+        elif "1021" in context:
+            # Suspicious invoice - triggers validation fraud flags
+            invoice_data["invoice_number"] = "INV-1021"
+            invoice_data["vendor"]["name"] = "Acme Industrial Supplies"
+            invoice_data["vendor"]["address"] = "PO Box 12345, Somewhere, USA"
+            invoice_data["due_date"] = "2026-03-02"
+            invoice_data["payment_terms"] = "Due immediately"
+            invoice_data["line_items"] = [
+                {"item": "WidgetA", "quantity": 99, "unit_price": 251.00},
+            ]
+            invoice_data["total"] = 24849.00
+            invoice_data["subtotal"] = 24849.00
+
+        elif "1022" in context:
+            # Subtly suspicious invoice - passes validation but AI should escalate
+            # Red flags: PO Box only, qty=99 (just under round number), price=$249.99 (just under $250)
+            invoice_data["invoice_number"] = "INV-1022"
+            invoice_data["vendor"]["name"] = "Acme Industrial Supplies"
+            invoice_data["vendor"]["address"] = "PO Box 99999"
+            invoice_data["line_items"] = [
+                {"item": "WidgetA", "quantity": 99, "unit_price": 249.99},
+            ]
+            invoice_data["total"] = 24749.01
+            invoice_data["subtotal"] = 24749.01
+
         return json.dumps(invoice_data)
 
     def _mock_validation_response(self, context: str) -> str:
@@ -240,10 +310,30 @@ class MockClient(LLMClient):
 
     def _mock_approval_response(self, context: str) -> str:
         """Generate mock approval decision."""
+        # Check for suspicious patterns that should trigger escalation
+        if "1021" in context:
+            return json.dumps({
+                "status": "NEEDS_HUMAN",
+                "reasoning": "Multiple red flags detected: PO Box address, unusually specific quantity (99), "
+                            "price slightly above standard ($251 vs $250), immediate payment terms. "
+                            "Recommend human review.",
+                "escalation_reason": "Unusual patterns suggest possible fraud attempt - PO Box, "
+                                    "odd quantity, price manipulation, urgency pressure tactics",
+            })
+        
+        if "1022" in context:
+            return json.dumps({
+                "status": "NEEDS_HUMAN",
+                "reasoning": "Subtle red flags detected: PO Box only address (no street), quantity of 99 "
+                            "(just under round number 100), unit price $249.99 (just under standard $250). "
+                            "These patterns are commonly seen in fraud attempts to stay under thresholds.",
+                "escalation_reason": "AI detected suspicious patterns: threshold manipulation (qty 99, price $249.99), "
+                                    "PO Box only address. Recommend human verification.",
+            })
+        
         return json.dumps({
             "status": "APPROVED",
             "reasoning": "Invoice meets all criteria. Vendor is known, items are in stock, and amount is within normal range.",
-            "rules_applied": ["stock_check", "vendor_check", "amount_threshold"],
         })
 
     def _mock_critique_response(self, context: str) -> str:

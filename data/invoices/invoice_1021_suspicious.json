@@ -1,0 +1,25 @@
+{
+  "invoice_number": "INV-1021",
+  "vendor": {
+    "name": "Acme Industrial Supplies",
+    "address": "PO Box 12345, Somewhere, USA"
+  },
+  "date": "2026-03-01",
+  "due_date": "2026-03-02",
+  "line_items": [
+    {
+      "item": "WidgetA",
+      "description": "URGENT - Rush order for client emergency",
+      "quantity": 99,
+      "unit_price": 251.00,
+      "total": 24849.00
+    }
+  ],
+  "subtotal": 24849.00,
+  "tax_rate": 0.0,
+  "tax_amount": 0.00,
+  "total": 24849.00,
+  "currency": "USD",
+  "payment_terms": "Due immediately",
+  "notes": "URGENT: Wire transfer required. Contact john.smith.temp@gmail.com for payment details. Penalty of $5000 if not paid within 24 hours."
+}
