@@ -118,29 +118,9 @@ class IngestionAgent:
             if invoice:
                 return invoice
 
-        # Use LLM for extraction
-        system_prompt = """You are an invoice data extraction expert. Extract structured data from the invoice text.
-
-Return a JSON object with these fields:
-- invoice_number: string (normalize to format INV-XXXX)
-- vendor: {name: string, address: string or null}
-- date: string (YYYY-MM-DD format) or null
-- due_date: string (YYYY-MM-DD format) or null
-- line_items: array of {item: string, quantity: integer, unit_price: number, amount: number or null}
-- subtotal: number or null
-- tax_rate: number (decimal, e.g., 0.08 for 8%) or null
-- tax_amount: number or null
-- total: number (required)
-- currency: string (default "USD")
-- payment_terms: string or null
-
-Important:
-- Normalize item names by removing extra spaces
-- Convert all dates to YYYY-MM-DD format
-- Handle OCR errors (letter O vs digit 0, etc.)
-- If quantity is negative, preserve it (it's a data issue to flag)
-- If vendor name is empty, use empty string ""
-"""
+        # Use LLM for extraction with persona
+        from src.prompts.personas import INGESTION_SYSTEM_PROMPT
+        system_prompt = INGESTION_SYSTEM_PROMPT
 
         messages = [
             {"role": "system", "content": system_prompt},

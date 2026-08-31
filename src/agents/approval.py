@@ -205,18 +205,8 @@ class ApprovalAgent:
         rules_applied: list[str],
     ) -> dict:
         """Generate an initial approval decision using LLM."""
-        system_prompt = """You are an invoice approval expert. Analyze the invoice and validation results to make an approval decision.
-
-Consider:
-- Validation flags and their severity
-- Invoice amount and risk level
-- Vendor relationship
-- Overall data quality
-
-Return JSON with:
-- status: "APPROVED" or "REJECTED"
-- reasoning: detailed explanation of your decision
-"""
+        from src.prompts.personas import APPROVAL_GENERATOR_SYSTEM_PROMPT
+        system_prompt = APPROVAL_GENERATOR_SYSTEM_PROMPT
 
         user_content = f"""Invoice: {invoice.invoice_number}
 Vendor: {invoice.vendor.name}
@@ -252,19 +242,8 @@ Make your approval decision."""
         rules_applied: list[str],
     ) -> CritiqueResult:
         """Critique a proposed decision using LLM."""
-        system_prompt = """You are a critical reviewer of invoice approval decisions. Your job is to find flaws in the proposed decision.
-
-Check that the decision:
-1. Properly accounts for all validation flags
-2. Follows the approval rules
-3. Has sound reasoning
-4. Doesn't miss any red flags
-
-Return JSON with:
-- accepted: boolean (true if decision is sound, false if it needs revision)
-- reasoning: explanation of your critique
-- suggested_changes: string with improvements (null if accepted)
-"""
+        from src.prompts.personas import APPROVAL_CRITIC_SYSTEM_PROMPT
+        system_prompt = APPROVAL_CRITIC_SYSTEM_PROMPT
 
         user_content = f"""Invoice: {invoice.invoice_number}
 Vendor: {invoice.vendor.name}
@@ -301,14 +280,8 @@ Critique this decision."""
         rules_applied: list[str],
     ) -> dict:
         """Refine a decision based on critique feedback."""
-        system_prompt = """You are refining an invoice approval decision based on feedback.
-
-Address the critique and produce an improved decision.
-
-Return JSON with:
-- status: "APPROVED" or "REJECTED"
-- reasoning: improved explanation
-"""
+        from src.prompts.personas import APPROVAL_REFINER_SYSTEM_PROMPT
+        system_prompt = APPROVAL_REFINER_SYSTEM_PROMPT
 
         user_content = f"""Invoice: {invoice.invoice_number}
 Total: ${invoice.total:,.2f}

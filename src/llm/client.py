@@ -273,7 +273,7 @@ class GrokClient(LLMClient):
     """
 
     BASE_URL = "https://api.x.ai/v1"
-    DEFAULT_MODEL = "grok-beta"  # Update when grok-3 is available
+    DEFAULT_MODEL = "grok-4.6"  # Available: grok-4.3, grok-4.5, grok-4.6
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
         """

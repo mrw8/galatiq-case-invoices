@@ -21,22 +21,27 @@ A four-stage automated pipeline that:
 ## Quick Start
 
 ```bash
-# Clone and install
+# Clone and install (with all dependencies including dev/test)
 git clone <repo>
 cd galatiq-case-invoices
-pip install -e ".[dev]"
+uv sync --all-extras
 
 # Initialize database
-python -m src.main --init-db
+uv run python -m src.main --init-db
 
 # Process an invoice
-python -m src.main --invoice_path data/invoices/invoice_1001.txt
+uv run python -m src.main --invoice_path data/invoices/invoice_1001.txt
+
+# Run tests
+uv run pytest tests/ -v
 ```
 
 **Run the UI:**
 ```bash
-streamlit run src/ui/app.py
+uv run streamlit run src/ui/app.py
 ```
+
+> **Note:** On a fresh system, always use `uv sync --all-extras` to ensure all dependencies (including dev/test) are installed. Plain `uv sync` skips optional extras.
 
 ## Architecture
 
@@ -94,7 +99,7 @@ flowchart LR
 
 ## Test Results
 
-**99 tests passing** covering all scenarios from the case study:
+**132 tests passing** covering all scenarios from the case study:
 
 ```
 tests/test_models.py      14 passed   # Pydantic models
@@ -104,6 +109,10 @@ tests/test_validation.py  15 passed   # Validation flags
 tests/test_approval.py    17 passed   # Approval logic
 tests/test_payment.py      9 passed   # Payment processing
 tests/test_pipeline.py    13 passed   # End-to-end scenarios
+tests/test_audit.py        8 passed   # Audit trail
+tests/test_recovery.py     7 passed   # Error recovery
+tests/test_workflow.py    11 passed   # Human review queue
+tests/test_feedback.py     7 passed   # Feedback/corrections
 ```
 
 Run tests:
@@ -160,7 +169,13 @@ runs/                  # Trace logs (JSON per run)
 - Generator/critic approval loop
 - Structured JSON logging with traces
 - Streamlit UI for demo
-- Comprehensive test suite
+- Comprehensive test suite (132 tests)
+
+**Production Wrappers (implemented):**
+- `src/audit/` - Immutable audit trail for compliance
+- `src/recovery/` - Error recovery with retry queue and dead letters
+- `src/workflow/` - Human review queue for NEEDS_HUMAN items
+- `src/feedback/` - Correction tracking for learning over time
 
 **Deferred:**
 - Real LangGraph integration (env dependency issues - using compatible SimplePipeline)
@@ -169,12 +184,23 @@ runs/                  # Trace logs (JSON per run)
 - User authentication
 - Webhook notifications
 
+## Known Gaps (Not Implemented)
+
+The following would be needed for a full production system but are out of scope:
+
+| Gap | Description | Why Deferred |
+|-----|-------------|--------------|
+| **Integration Points** | ERP, accounting software, real payment APIs, email ingestion | Requires external systems |
+| **PO/Three-Way Match** | Match invoice to purchase order and receiving report | Significant business logic |
+| **Multi-Tenant/Auth** | User roles, org isolation, approval hierarchies | Infrastructure concern |
+| **Currency/Tax** | Multi-currency conversion, tax calculation, regulatory compliance | Domain complexity |
+
 ## What I'd Do Next
 
 1. **LangGraph Migration** - Swap SimplePipeline for real LangGraph when env supports it
-2. **Human Review Queue** - UI page for NEEDS_HUMAN invoices with approve/reject actions
+2. **Review Queue UI** - Add Streamlit page for human review workflow
 3. **Batch Analytics** - Dashboard showing approval rates, common rejection reasons
-4. **Vendor Learning** - Auto-adjust fuzzy matching based on confirmed matches
+4. **Pipeline Integration** - Wire audit/recovery/workflow into main pipeline
 5. **Cost Tracking** - Log LLM token usage per run for cost optimization
 6. **Webhook Integration** - Notify external systems on approval/rejection
 

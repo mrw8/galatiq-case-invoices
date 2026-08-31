@@ -1,0 +1,15 @@
+"""Centralized prompts with personas for each agent."""
+
+from src.prompts.personas import (
+    INGESTION_SYSTEM_PROMPT,
+    APPROVAL_GENERATOR_SYSTEM_PROMPT,
+    APPROVAL_CRITIC_SYSTEM_PROMPT,
+    APPROVAL_REFINER_SYSTEM_PROMPT,
+)
+
+__all__ = [
+    "INGESTION_SYSTEM_PROMPT",
+    "APPROVAL_GENERATOR_SYSTEM_PROMPT", 
+    "APPROVAL_CRITIC_SYSTEM_PROMPT",
+    "APPROVAL_REFINER_SYSTEM_PROMPT",
+]
