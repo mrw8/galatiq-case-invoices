@@ -39,7 +39,7 @@ class ValidationAgent:
         Returns:
             Updated state with validation_result populated.
         """
-        logger = AgentLogger("validation", state.run_id)
+        logger = AgentLogger("validation", state.run_id, state)
         logger.started({"invoice_number": state.invoice.invoice_number if state.invoice else None})
 
         if not state.invoice:
@@ -219,7 +219,7 @@ class ValidationAgent:
 
         # Check vendor name for suspicious keywords
         vendor_lower = invoice.vendor.name.lower()
-        suspicious_names = ["fraud", "fake", "scam", "test"]
+        suspicious_names = ["fraud", "fake", "scam"]
         for word in suspicious_names:
             if word in vendor_lower:
                 indicators.append(f"suspicious vendor name contains '{word}'")

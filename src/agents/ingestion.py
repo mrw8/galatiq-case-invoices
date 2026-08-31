@@ -37,7 +37,7 @@ class IngestionAgent:
         Returns:
             Updated state with invoice populated (or error set).
         """
-        logger = AgentLogger("ingestion", state.run_id)
+        logger = AgentLogger("ingestion", state.run_id, state)
         logger.started({"source": state.source_path})
 
         try:

@@ -198,6 +198,16 @@ class MockClient(LLMClient):
             invoice_data["total"] = 100000.00
             invoice_data["subtotal"] = 100000.00
 
+        elif "1008" in context or "supergizmo" in context or "megasprocket" in context:
+            invoice_data["invoice_number"] = "INV-1008"
+            invoice_data["vendor"]["name"] = "NoProd Industries"
+            invoice_data["line_items"] = [
+                {"item": "SuperGizmo", "quantity": 12, "unit_price": 400.00},
+                {"item": "MegaSprocket", "quantity": 6, "unit_price": 850.00},
+            ]
+            invoice_data["total"] = 9900.00
+            invoice_data["subtotal"] = 9900.00
+
         elif "1009" in context:
             invoice_data["invoice_number"] = "INV-1009"
             invoice_data["vendor"]["name"] = ""

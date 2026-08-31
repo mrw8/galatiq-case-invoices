@@ -53,7 +53,7 @@ class ApprovalAgent:
         Returns:
             Updated state with approval_decision populated.
         """
-        logger = AgentLogger("approval", state.run_id)
+        logger = AgentLogger("approval", state.run_id, state)
         logger.started({
             "invoice_number": state.invoice.invoice_number if state.invoice else None,
             "validation_flags": (

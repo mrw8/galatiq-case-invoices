@@ -38,7 +38,7 @@ class PaymentAgent:
         Returns:
             Updated state with payment_status populated.
         """
-        logger = AgentLogger("payment", state.run_id)
+        logger = AgentLogger("payment", state.run_id, state)
         logger.started({
             "invoice_number": state.invoice.invoice_number if state.invoice else None,
             "approval_status": (

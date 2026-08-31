@@ -57,7 +57,7 @@ class VendorLookupResult:
 def lookup_item(
     item_name: str,
     db_path: Path | str = DEFAULT_DB_PATH,
-    fuzzy_threshold: int = 80,
+    fuzzy_threshold: int = 90,
 ) -> ItemLookupResult:
     """
     Look up an item in inventory, with optional fuzzy matching.

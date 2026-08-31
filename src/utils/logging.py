@@ -72,12 +72,14 @@ class AgentLogger:
     Specialized logger for agent events.
 
     Ensures consistent event structure across all agents.
+    Optionally adds events to pipeline state for tracing.
     """
 
-    def __init__(self, agent_name: str, run_id: str):
+    def __init__(self, agent_name: str, run_id: str, state: Any | None = None):
         self.agent_name = agent_name
         self.run_id = run_id
         self._logger = get_logger(agent_name)
+        self._state = state  # Optional PipelineState to add events to
 
     def event(
         self,
@@ -106,6 +108,10 @@ class AgentLogger:
 
         log_method = getattr(self._logger, level, self._logger.info)
         log_method(event_type, **event_data)
+
+        # Also add to pipeline state if available
+        if self._state is not None and hasattr(self._state, "events"):
+            self._state.events.append(event_data)
 
         return event_data
 
