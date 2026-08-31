@@ -142,19 +142,19 @@ class ValidationFlag(str, Enum):
 
 ```bash
 # Run single invoice
-python -m src.main --invoice_path data/invoices/invoice_1001.txt
+uv run python -m src.main --invoice_path data/invoices/invoice_1001.txt
 
 # Run batch (directory)
-python -m src.main --invoice_path data/invoices/
+uv run python -m src.main --invoice_path data/invoices/
 
-# Use real LLM (later)
-LLM_BACKEND=grok python -m src.main --invoice_path ...
+# Use real LLM (Grok)
+LLM_BACKEND=grok XAI_API_KEY=your_key uv run python -m src.main --invoice_path ...
 
 # Run tests
-pytest tests/ -v
+uv run pytest tests/ -v
 
 # Type check
-mypy src/ --strict
+uv run mypy src/ --strict
 ```
 
 ## What We're NOT Doing (Scope Cuts)

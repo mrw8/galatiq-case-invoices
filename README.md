@@ -102,25 +102,26 @@ flowchart LR
 
 ## Test Results
 
-**132 tests passing** covering all scenarios from the case study:
+**146 tests passing** covering all scenarios from the case study:
 
 ```
+tests/test_adversarial.py  8 passed   # Prompt injection resistance
 tests/test_models.py      14 passed   # Pydantic models
-tests/test_db.py          19 passed   # Database queries  
+tests/test_db.py          26 passed   # Database queries + SQL injection protection
 tests/test_ingestion.py   12 passed   # File parsing
-tests/test_validation.py  15 passed   # Validation flags
+tests/test_validation.py  16 passed   # Validation flags
 tests/test_approval.py    17 passed   # Approval logic
-tests/test_payment.py      9 passed   # Payment processing
-tests/test_pipeline.py    13 passed   # End-to-end scenarios
+tests/test_payment.py     10 passed   # Payment processing
+tests/test_pipeline.py    14 passed   # End-to-end scenarios
 tests/test_audit.py        8 passed   # Audit trail
 tests/test_recovery.py     7 passed   # Error recovery
-tests/test_workflow.py    11 passed   # Human review queue
-tests/test_feedback.py     7 passed   # Feedback/corrections
+tests/test_workflow.py    10 passed   # Human review queue
+tests/test_feedback.py     8 passed   # Feedback/corrections
 ```
 
 Run tests:
 ```bash
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ## LLM Backend
@@ -132,13 +133,13 @@ The system supports two backends:
 | **Mock** (default) | `LLM_BACKEND=mock` | Testing, demos, no API key |
 | **Grok** | `LLM_BACKEND=grok` | Production with xAI API |
 
-The mock client returns deterministic responses based on invoice content, making tests reproducible and fast (~2.7s for 99 tests).
+The mock client returns deterministic responses based on invoice content, making tests reproducible and fast (~6s for 146 tests).
 
 To use Grok:
 ```bash
 export XAI_API_KEY=your_key
 export LLM_BACKEND=grok
-python -m src.main --invoice_path data/invoices/invoice_1001.txt
+uv run python -m src.main --invoice_path data/invoices/invoice_1001.txt
 ```
 
 ## Project Structure
@@ -211,22 +212,22 @@ The following would be needed for a full production system but are out of scope:
 
 ```bash
 # Clean invoice - should approve
-python -m src.main --invoice_path data/invoices/invoice_1001.txt
+uv run python -m src.main --invoice_path data/invoices/invoice_1001.txt
 
 # Stock exceeded - should reject
-python -m src.main --invoice_path data/invoices/invoice_1002.txt
+uv run python -m src.main --invoice_path data/invoices/invoice_1002.txt
 
 # Fraud indicators - should reject
-python -m src.main --invoice_path data/invoices/invoice_1003.txt
+uv run python -m src.main --invoice_path data/invoices/invoice_1003.txt
 
 # Negative quantity - should reject  
-python -m src.main --invoice_path data/invoices/invoice_1009.json
+uv run python -m src.main --invoice_path data/invoices/invoice_1009.json
 
 # Unknown item - should reject
-python -m src.main --invoice_path data/invoices/invoice_1016.json
+uv run python -m src.main --invoice_path data/invoices/invoice_1016.json
 
 # Batch process all
-python -m src.main --invoice_path data/invoices/
+uv run python -m src.main --invoice_path data/invoices/
 ```
 
 ## Sample Output
